@@ -97,7 +97,7 @@ extern "C" void TIMER0_IRQHandler (void)
 void timer0_init(void)
 {
     LPC_SC->PCONP |=1<1;            //timer0 power on
-    LPC_TIM0->MR0 = 239800;        //100 msec
+    LPC_TIM0->MR0 = 239800;         //10 msec
     LPC_TIM0->MCR = 3;              //interrupt and reset control
                                     //3 = Interrupt & reset timer0 on match
                                     //1 = Interrupt only, no reset of timer0

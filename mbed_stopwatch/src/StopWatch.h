@@ -52,6 +52,7 @@ typedef struct StopWatch
     void (*Start)(void);
     void (*Stop)(void);
     void (*Reset)(void);
+    void (*Tick) (int);
     StopWatchTime * (*GetTime)(void);
 } StopWatch;
 

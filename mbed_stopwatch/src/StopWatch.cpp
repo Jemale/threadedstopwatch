@@ -18,6 +18,7 @@
  *                              INCLUDE FILES                               *
  ****************************************************************************/
 #include "StopWatch.h"
+
 #include "main.h"
 
 /****************************************************************************
@@ -40,11 +41,15 @@ ClockSegment TENHOUR_SEG;
 /****************************************************************************
  *                              PRIVATE DATA                                *
  ****************************************************************************/
+//Timer t;
+
 static StopWatch Watch;
 static StopWatchState WatchState;
 static StopWatchTime Time;
 static SystemTimerDevice * Timer;
 static void (* timeChangeCallback)(int, char);
+
+
 /****************************************************************************
  *                             EXTERNAL DATA                                *
  ****************************************************************************/
@@ -55,6 +60,7 @@ static void (* timeChangeCallback)(int, char);
 void start_clock(void);
 void stop_clock(void);
 void reset_clock(void);
+void tick_segment(int);
 StopWatchTime * current_time(void);
 
 void incrementSegment(ClockSegment * seg);
@@ -77,6 +83,7 @@ StopWatch * StopWatch_Init(SystemTimerDevice * tim, void (* prtCb)(int, char))
     Watch.Start = start_clock;
     Watch.Stop = stop_clock;
     Watch.Reset = reset_clock;
+    Watch.Tick	= tick_segment;
     Watch.GetTime = current_time;
 
     WatchState = STOPWATCH_NOT_STARTED;
@@ -91,7 +98,7 @@ StopWatch * StopWatch_Init(SystemTimerDevice * tim, void (* prtCb)(int, char))
     TENTH_SEG.rollover = 10;
     TENTH_SEG.currentValue = 0;
     TENTH_SEG.screenLocation = 9;
-    TENTH_SEG.nextSegment = &SEC_SEG;
+    TENTH_SEG.nextSegment = NULL;//&SEC_SEG;
     TENTH_SEG.prevSegment = &HUNDREDTH_SEG;
 
     SEC_SEG.rollover = 10;
@@ -103,7 +110,7 @@ StopWatch * StopWatch_Init(SystemTimerDevice * tim, void (* prtCb)(int, char))
     TENSEC_SEG.rollover = 6;
     TENSEC_SEG.currentValue = 0;
     TENSEC_SEG.screenLocation = 6;
-    TENSEC_SEG.nextSegment = &MINUTE_SEG;
+    TENSEC_SEG.nextSegment = NULL;//&MINUTE_SEG;
     TENSEC_SEG.prevSegment = &SEC_SEG;
 
     MINUTE_SEG.rollover = 10;
@@ -140,13 +147,20 @@ StopWatch * StopWatch_Init(SystemTimerDevice * tim, void (* prtCb)(int, char))
  ****************************************************************************/
 void start_clock(void)
 {
+    //t.stop();
+   // int diff = t.read_us();
+    //if (diff > 1000)
+    //{
+    	//add diff to current count 	
+    //}
     WatchState = STOPWATCH_RUNNING;
-    Timer->SetTimer(TEN_MS);
+    //Timer->SetTimer(TEN_MS);
 }
 
 void stop_clock(void)
 {
     WatchState = STOPWATCH_IDLE;
+  //  t.start();
     Timer->SetTimer(0);
 }
 
@@ -200,7 +214,11 @@ void incrementSegment(ClockSegment * seg)
     {
 	seg->currentValue = 0;
     }
-
+	
+	//3pm: need to break this function here for concurrency
+	//8pm: setting appropriate segments' nextSegment to null is similar to breaking this method
+	//now need to handle the updating lcd...
+	
 	timeChangeCallback(seg->screenLocation, (char)(seg->currentValue) );
 	
     if(0 == seg->currentValue && seg->nextSegment != NULL)
@@ -225,10 +243,27 @@ void clockTick(void)
     if(WatchState == STOPWATCH_RUNNING)
     {
 	 incrementSegment(&HUNDREDTH_SEG);
-	
     }
 }
 
+void tick_segment (int n)
+{   
+    //int k = 0;
+	if (WatchState == STOPWATCH_RUNNING){
+		switch(n){
+			case 0:
+				incrementSegment(&HUNDREDTH_SEG);
+				break;
+			case 1:
+				incrementSegment(&SEC_SEG);
+				break;			
+			case 2:
+				incrementSegment(&MINUTE_SEG);
+				break;
+	
+		}
+	}	
+}
 /************************************************************************//**
  * \brief
  * \param

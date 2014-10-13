@@ -23,6 +23,7 @@
 #include "StopWatch.h"
 #include "SysTimer.h"
 #include "TextLCD.h"
+
 #include "rtos.h"
 
 /****************************************************************************
@@ -40,6 +41,20 @@ StopWatch * stopWatch = StopWatch_Init(sysTimer, printTime);
 TextLCD lcd(p15, p16, p17, p18, p19, p20);
     
 char timeBuf[16];
+
+int stopped = 0;
+int started = 0;
+int update_sec_timer = 0;
+int update_min_timer = 0;
+int update_hun_timer = 0;
+
+RtosTimer* timer_hun;
+RtosTimer* timer_sec;
+RtosTimer* timer_min;
+
+Timer t;
+
+Mutex stopwatch_mutex;
 /****************************************************************************
  *                             EXTERNAL DATA                                *
  ****************************************************************************/
@@ -50,6 +65,12 @@ char timeBuf[16];
 bool timeEqual(StopWatchTime * time1, StopWatchTime * time2);
 char * getTime(void);
 
+void signal_segment(void const *n);
+
+void hundredths_thread (void const *args);
+void seconds_thread (void const *args);
+void minutes_thread (void const *args);
+
 /****************************************************************************
  *                     EXPORTED FUNCTION DEFINITIONS                        *
  ****************************************************************************/
@@ -57,12 +78,42 @@ char * getTime(void);
 int MAIN(void)
 {
 
-    StopWatchTime lcdTime;
-    StopWatchTime currentTime;
+	//Start each thread here, 
+	Thread hun(hundredths_thread);
+	Thread sec(seconds_thread);	
+	Thread min(minutes_thread);
+	
+	hun.set_priority(osPriorityNormal);
+	sec.set_priority(osPriorityAboveNormal);
+	min.set_priority(osPriorityHigh);
+	
+//	this.set_priority(osPriorityRealtime);
+	
+	
+	//shared variables: stopwatch (1, 2, 3, 4, 5), currentTime(1,2,3,4)(should just be stopwatch, no? cause it returns the time),
+	// or should it just be time, and time gets updated by a separate thread
+	
+	//========================================================================
+	RtosTimer _hun(signal_segment, osTimerPeriodic, (void *) &hun);
+	RtosTimer _sec(signal_segment, osTimerPeriodic, (void *) &sec);
+	RtosTimer _min(signal_segment, osTimerPeriodic, (void *) &min);
+	
+	timer_hun = &_hun;
+	timer_sec = &_sec;
+	timer_min = &_min;
+	
+		
+	//timer_hun.start(10);
+	//timer_sec.start(1000);
+	//timer_min.start(60000);
+	
+	
+   // StopWatchTime lcdTime;
+   // StopWatchTime currentTime;
     Serial pc(USBTX, USBRX);
 
-    int input = 5;
-	int click = 0;
+    //int input = 5;
+	//int click = 0;
 	
     lcd.printf("Timer Starting");
     lcd.cls();
@@ -95,13 +146,63 @@ int MAIN(void)
             
 	   		switch (c){
 	      		case 's':
-					stopWatch->Start();
+	      			int diff;
+	      			stopWatch->Start();
+	      			
+	      			if (!started){
+	      				diff = 0;
+	      				t.start();
+	      				
+						started = 1;
+						if(stopped){	
+							timer_hun->start(10 - (diff % 10));
+							timer_sec->start(1000 - (diff % 1000));
+							timer_min->start(60000 - (diff % 60000));   
+							stopped = 0;
+						}else{
+							timer_hun->start(10);
+							timer_sec->start(1000);
+							timer_min->start(60000);
+						}
+					}else
+					{	
+						diff = 0; //t.read_us() / (10^3);
+						t.start();
+						
+						if(stopped){	
+							timer_hun->start(10 - (diff % 10));
+							timer_sec->start(1000 - (diff % 1000));
+							timer_min->start(60000 - (diff % 60000));   
+							stopped = 0;
+						}else{
+							timer_hun->start(10);
+							timer_sec->start(1000);
+							timer_min->start(60000);
+						}
+						
+					}	
 					break;
 	      		case 'p' :
+	      			stopped = 1;
+	      			update_hun_timer = 1;
+	      			update_sec_timer = 1;
+	      			update_min_timer = 1;
+	      			t.stop();
+	      			timer_hun->stop();
+					timer_sec->stop();
+					timer_min->stop();
 					stopWatch->Stop();
 					break;
 	      		case 'r' :
+	      			stopped = 0;
+	      			started = 0;
+	      			update_hun_timer = 0;
+	      			update_min_timer = 0;
+	      			update_sec_timer = 0;
 					stopWatch->Reset();
+					//timer_hun->start(10);
+					//timer_sec->start(1000);
+					//timer_min->start(60000);
 					break;
    				}
            }
@@ -113,6 +214,90 @@ int MAIN(void)
 /****************************************************************************
  *                     PRIVATE FUNCTION DEFINITIONS                         *
  ****************************************************************************/
+
+/*******************************THREADS**************************************/
+void signal_segment(void const * tptr)
+{
+	((Thread *)tptr)->signal_set(0x1);
+	/*switch ((int) n)
+	{
+		case 0:
+			hun.signal_set(0x1);
+			break;
+		case 1:
+			sec.signal_set(0x1);
+			break;
+		case 2:
+			min.signal_set(0x1);
+			break;
+	}*/
+}
+
+void hundredths_thread (void const *args)
+{
+	//stopwatch_mutex.lock();
+	while (true)
+	{
+		Thread::signal_wait(0x1);
+		
+		stopwatch_mutex.lock();
+		stopWatch->Tick(0);
+		stopwatch_mutex.unlock();
+		
+		//restart timer correctly
+		if (update_hun_timer)
+		{
+			timer_hun->start(10);
+			update_hun_timer = 0;
+		}
+	}
+	
+	
+	
+	//stopwatch_mutex.unlock();	
+}
+
+void seconds_thread (void const *args)
+{
+	while (true)
+	{
+		//update seconds
+		Thread::signal_wait(0x1);
+		
+		stopwatch_mutex.lock();	
+		stopWatch->Tick(1);
+		stopwatch_mutex.unlock();
+		
+		if(update_sec_timer)
+		{
+			timer_sec->start(1000);
+			update_sec_timer = 0;	
+		}
+	}	
+}
+
+void minutes_thread(void const *args)
+{
+	while(true)
+	{
+		//update minutes	
+		Thread::signal_wait(0x1);
+		
+		stopwatch_mutex.lock();
+		stopWatch->Tick(2);
+		stopwatch_mutex.unlock();
+		
+		
+		if (update_min_timer)
+		{
+			timer_min->start(60000);
+			update_min_timer = 0;	
+		}
+	}	
+}
+
+//normal functions
+
 bool timeEqual(StopWatchTime * time1, StopWatchTime * time2)
 {
    int * time1array = (int *)time1;
