@@ -44,6 +44,7 @@ char timeBuf[16];
 
 int stopped = 0;
 int started = 0;
+int was_paused = 0;
 int update_sec_timer = 0;
 int update_min_timer = 0;
 int update_hun_timer = 0;
@@ -87,7 +88,6 @@ int MAIN(void)
 	sec.set_priority(osPriorityAboveNormal);
 	min.set_priority(osPriorityHigh);
 	
-//	this.set_priority(osPriorityRealtime);
 	
 	
 	//shared variables: stopwatch (1, 2, 3, 4, 5), currentTime(1,2,3,4)(should just be stopwatch, no? cause it returns the time),
@@ -140,69 +140,38 @@ int MAIN(void)
 		if (pc.readable())
 		{
 			
-			
 	   		char c = pc.getc();
-           
-            
+                   
 	   		switch (c){
 	      		case 's':
-	      			int diff;
+	      			//need to know the state of the time 
+	      			//if was paused, have to start the timers with a smaller countdown
+	      			int diff = 0;
+	      			if (was_paused){
+	      				//figure out that smaller countdown time	
+	      				diff = t.read_ms(); //elapsed time from start in milliseconds
+	      				//pc.printf("Elapsed time: %i\n\r", diff);
+	      				was_paused = 0;
+	      			}
 	      			stopWatch->Start();
-	      			
-	      			if (!started){
-	      				diff = 0;
-	      				t.start();
-	      				
-						started = 1;
-						if(stopped){	
-							timer_hun->start(10 - (diff % 10));
-							timer_sec->start(1000 - (diff % 1000));
-							timer_min->start(60000 - (diff % 60000));   
-							stopped = 0;
-						}else{
-							timer_hun->start(10);
-							timer_sec->start(1000);
-							timer_min->start(60000);
-						}
-					}else
-					{	
-						diff = 0; //t.read_us() / (10^3);
-						t.start();
-						
-						if(stopped){	
-							timer_hun->start(10 - (diff % 10));
-							timer_sec->start(1000 - (diff % 1000));
-							timer_min->start(60000 - (diff % 60000));   
-							stopped = 0;
-						}else{
-							timer_hun->start(10);
-							timer_sec->start(1000);
-							timer_min->start(60000);
-						}
-						
-					}	
+	      			timer_hun->start(10 - (diff%10));
+	      			timer_sec->start(1000 - (diff%1000));
+	      			timer_min->start(60000 - (diff%60000));
+	      			t.start(); //start counting now
 					break;
 	      		case 'p' :
-	      			stopped = 1;
-	      			update_hun_timer = 1;
-	      			update_sec_timer = 1;
-	      			update_min_timer = 1;
-	      			t.stop();
 	      			timer_hun->stop();
 					timer_sec->stop();
 					timer_min->stop();
 					stopWatch->Stop();
+					t.stop(); //pause stopwatch --> stop counting, now t.read has amount of time counted
+					was_paused = 1;
+					//pc.printf("paused\n\r");
 					break;
+					
 	      		case 'r' :
-	      			stopped = 0;
-	      			started = 0;
-	      			update_hun_timer = 0;
-	      			update_min_timer = 0;
-	      			update_sec_timer = 0;
 					stopWatch->Reset();
-					//timer_hun->start(10);
-					//timer_sec->start(1000);
-					//timer_min->start(60000);
+					//pc.printf("reset\n\r");
 					break;
    				}
            }
@@ -219,18 +188,7 @@ int MAIN(void)
 void signal_segment(void const * tptr)
 {
 	((Thread *)tptr)->signal_set(0x1);
-	/*switch ((int) n)
-	{
-		case 0:
-			hun.signal_set(0x1);
-			break;
-		case 1:
-			sec.signal_set(0x1);
-			break;
-		case 2:
-			min.signal_set(0x1);
-			break;
-	}*/
+
 }
 
 void hundredths_thread (void const *args)
@@ -245,11 +203,12 @@ void hundredths_thread (void const *args)
 		stopwatch_mutex.unlock();
 		
 		//restart timer correctly
-		if (update_hun_timer)
-		{
+		//if (update_hun_timer)
+		//{
+			timer_hun->stop();
 			timer_hun->start(10);
-			update_hun_timer = 0;
-		}
+			//update_hun_timer = 0;
+		//}
 	}
 	
 	
@@ -268,11 +227,12 @@ void seconds_thread (void const *args)
 		stopWatch->Tick(1);
 		stopwatch_mutex.unlock();
 		
-		if(update_sec_timer)
-		{
+		//if(update_sec_timer)
+		//{
+			timer_sec->stop();
 			timer_sec->start(1000);
-			update_sec_timer = 0;	
-		}
+			//update_sec_timer = 0;	
+		//}
 	}	
 }
 
@@ -288,11 +248,12 @@ void minutes_thread(void const *args)
 		stopwatch_mutex.unlock();
 		
 		
-		if (update_min_timer)
-		{
+		//if (update_min_timer)
+		//{
+			timer_min->stop();
 			timer_min->start(60000);
-			update_min_timer = 0;	
-		}
+			//update_min_timer = 0;	
+		//}
 	}	
 }
 
