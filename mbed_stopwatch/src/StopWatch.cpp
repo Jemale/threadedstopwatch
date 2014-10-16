@@ -220,7 +220,7 @@ void incrementSegment(ClockSegment * seg)
 	//now need to handle the updating lcd...
 	
 	timeChangeCallback(seg->screenLocation, (char)(seg->currentValue) );
-	
+	//message_t *message = mpool.alloc();
     if(0 == seg->currentValue && seg->nextSegment != NULL)
     {
 	incrementSegment((ClockSegment *)(seg->nextSegment));

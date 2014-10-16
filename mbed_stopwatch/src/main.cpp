@@ -33,18 +33,26 @@
 //error message
 void printTime(int, char);
 
+typedef struct {
+    int location;
+    char value;    
+}message_t;
+
+
 /****************************************************************************
  *                              PRIVATE DATA                                *
  ****************************************************************************/
 SystemTimerDevice * sysTimer = SystemTimer_Init();
 StopWatch * stopWatch = StopWatch_Init(sysTimer, printTime);
 TextLCD lcd(p15, p16, p17, p18, p19, p20);
-    
+Serial pc(USBTX, USBRX);
+
 char timeBuf[16];
 
 int stopped = 0;
 int started = 0;
-int was_paused = 0;
+volatile int was_paused = 0;
+volatile int running = 0;
 int update_sec_timer = 0;
 int update_min_timer = 0;
 int update_hun_timer = 0;
@@ -52,10 +60,15 @@ int update_hun_timer = 0;
 RtosTimer* timer_hun;
 RtosTimer* timer_sec;
 RtosTimer* timer_min;
-
 Timer t;
 
 Mutex stopwatch_mutex;
+Mutex m_thun;
+Mutex m_tsec;
+Mutex m_tmin;
+
+MemoryPool<message_t, 16> mpool;
+Queue<message_t, 16> queue;
 /****************************************************************************
  *                             EXTERNAL DATA                                *
  ****************************************************************************/
@@ -71,23 +84,27 @@ void signal_segment(void const *n);
 void hundredths_thread (void const *args);
 void seconds_thread (void const *args);
 void minutes_thread (void const *args);
-
+void display_function (void const *args);
+void input_function (void const *args);
 /****************************************************************************
  *                     EXPORTED FUNCTION DEFINITIONS                        *
  ****************************************************************************/
 //int MAIN(int argc, char *argv[])
 int MAIN(void)
 {
-
 	//Start each thread here, 
 	Thread hun(hundredths_thread);
 	Thread sec(seconds_thread);	
 	Thread min(minutes_thread);
 	
+	Thread display_thread(display_function);
+	Thread input_thread(input_function);
+	
 	hun.set_priority(osPriorityNormal);
 	sec.set_priority(osPriorityAboveNormal);
 	min.set_priority(osPriorityHigh);
-	
+	display_thread.set_priority(osPriorityNormal);
+	input_thread.set_priority(osPriorityNormal);
 	
 	
 	//shared variables: stopwatch (1, 2, 3, 4, 5), currentTime(1,2,3,4)(should just be stopwatch, no? cause it returns the time),
@@ -110,7 +127,7 @@ int MAIN(void)
 	
    // StopWatchTime lcdTime;
    // StopWatchTime currentTime;
-    Serial pc(USBTX, USBRX);
+    
 
     //int input = 5;
 	//int click = 0;
@@ -135,47 +152,8 @@ int MAIN(void)
 	lcd.putc('.');
 	lcd.putc('0');
 	
-    while(1)
-    {
-		if (pc.readable())
-		{
-			
-	   		char c = pc.getc();
-                   
-	   		switch (c){
-	      		case 's':
-	      			//need to know the state of the time 
-	      			//if was paused, have to start the timers with a smaller countdown
-	      			int diff = 0;
-	      			if (was_paused){
-	      				//figure out that smaller countdown time	
-	      				diff = t.read_ms(); //elapsed time from start in milliseconds
-	      				//pc.printf("Elapsed time: %i\n\r", diff);
-	      				was_paused = 0;
-	      			}
-	      			stopWatch->Start();
-	      			timer_hun->start(10 - (diff%10));
-	      			timer_sec->start(1000 - (diff%1000));
-	      			timer_min->start(60000 - (diff%60000));
-	      			t.start(); //start counting now
-					break;
-	      		case 'p' :
-	      			timer_hun->stop();
-					timer_sec->stop();
-					timer_min->stop();
-					stopWatch->Stop();
-					t.stop(); //pause stopwatch --> stop counting, now t.read has amount of time counted
-					was_paused = 1;
-					//pc.printf("paused\n\r");
-					break;
-					
-	      		case 'r' :
-					stopWatch->Reset();
-					//pc.printf("reset\n\r");
-					break;
-   				}
-           }
-	}
+    
+	while(1);
 
    return 0; 
 }
@@ -257,6 +235,96 @@ void minutes_thread(void const *args)
 	}	
 }
 
+void display_function (void const *args)
+{
+	while(true){
+		osEvent evt = queue.get();
+		if(evt.status == osEventMessage)
+		{
+			message_t * message = (message_t*)evt.value.p;
+			lcd.locate(message->location, 0);
+			lcd.putc(message->value + 48);
+			
+			mpool.free(message);	
+		} 	
+		
+	}	
+}
+
+
+void input_function(void const *args)
+{
+	
+	while(1)
+    {
+		if (pc.readable())
+		{
+			
+	   		char c = pc.getc();
+                   
+	   		switch (c){
+	      		case 's':
+	      			//need to know the state of the time 
+	      			//if was paused, have to start the timers with a smaller countdown
+	      			if (!running){
+	      				running = 1;
+	      			int diff = 0;
+	      			if (was_paused){
+	      				//figure out that smaller countdown time	
+	      				diff = t.read_ms(); //elapsed time from start in milliseconds
+	      				//pc.printf("Elapsed time: %i\n\r", diff);
+	      				was_paused = 0;
+	      			}
+	      			stopwatch_mutex.lock();
+	      			stopWatch->Start();
+	      			stopwatch_mutex.unlock();
+	      			
+	      			m_thun.lock();
+	      			timer_hun->start(10 - (diff%10));
+	      			m_thun.unlock();
+	      			
+	      			m_tsec.lock();
+	      			timer_sec->start(1000 - (diff%1000));
+	      			m_tsec.unlock();
+	      			
+	      			m_tmin.lock();
+	      			timer_min->start(60000 - (diff%60000));
+	      			m_tmin.unlock();
+	      			t.start(); //start counting now
+	      			}
+					break;
+	      		case 'p' :
+	      			running = 0;
+	      			m_thun.lock();
+	      			timer_hun->stop();
+	      			m_thun.unlock();
+	      			
+	      			m_tsec.lock();
+					timer_sec->stop();
+					m_tsec.unlock();
+					
+					m_tmin.lock();
+					timer_min->stop();
+					m_tmin.unlock();
+					stopwatch_mutex.lock();
+					stopWatch->Stop();
+					stopwatch_mutex.unlock();
+					t.stop(); //pause stopwatch --> stop counting, now t.read has amount of time counted
+					was_paused = 1;
+					//pc.printf("paused\n\r");
+					break;
+					
+	      		case 'r' :
+	      			stopwatch_mutex.lock();
+					stopWatch->Reset();
+					stopwatch_mutex.unlock();
+					//pc.printf("reset\n\r");
+					break;
+   				}
+           }
+        }	
+}
+
 //normal functions
 
 bool timeEqual(StopWatchTime * time1, StopWatchTime * time2)
@@ -288,8 +356,12 @@ void ScreenTest(void)
 
 void printTime(int segment, char c)
 {
-	lcd.locate(segment, 0);
-	lcd.putc(c + 48);
+	message_t *message = mpool.alloc();
+	message->location = segment;
+	message-> value = c;
+	queue.put(message);
+	//lcd.locate(segment, 0);
+	//lcd.putc(c + 48);
 		
 }
 
